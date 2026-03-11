@@ -5,6 +5,7 @@ import os
 import random
 import time
 from pathlib import Path
+from torchvision.utils import save_image, make_grid
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -32,20 +33,6 @@ from models import utils as mutils
 # -----------------------------
 # Utilities
 # -----------------------------
-def grad_and_param_stats(model):
-    grad_sq = 0.0
-    param_sq = 0.0
-    grad_found = False
-    for p in model.parameters():
-        param_sq += float(p.detach().float().pow(2).sum().item())
-        if p.grad is not None:
-            g = p.grad.detach().float()
-            grad_sq += float(g.pow(2).sum().item())
-            grad_found = True
-    grad_norm = math.sqrt(grad_sq) if grad_found else 0.0
-    param_norm = math.sqrt(param_sq)
-    return grad_norm, param_norm
-
 def amp_autocast(device: torch.device, enabled: bool):
     if device.type == "cuda":
         return torch.autocast(device_type="cuda", dtype=torch.float16, enabled=enabled)
@@ -676,8 +663,8 @@ def main(args: argparse.Namespace) -> None:
     print(f"[INFO] checkpoint dir  : {ckpt_dir}", flush=True)
 
     for step in range(initial_step + 1, cfg.training.n_iters + 1):
-        batch = next(train_iter).to(cfg.device, non_blocking=True).float()
-        batch = get_data_scaler(bool(cfg.data.centered))(batch)
+        batch_raw = next(train_iter).to(cfg.device, non_blocking=True).float()
+        batch = get_data_scaler(bool(cfg.data.centered))(batch_raw)
         train_loss = train_step_fn(state, batch)
 
         if step % cfg.training.log_freq == 0:
@@ -688,9 +675,29 @@ def main(args: argparse.Namespace) -> None:
 
         if step % cfg.training.eval_freq == 0 and val_loader is not None:
             losses = []
-            for val_batch in val_loader:
-                val_batch = val_batch.to(cfg.device, non_blocking=True).float()
+            for val_idx, val_batch_raw in enumerate(val_loader):
+                val_batch_raw = val_batch.to(cfg.device, non_blocking=True).float()
+
+                if args.dump_raw_batch and val_idx == 0:
+                    debug_dir = workdir / "debug_batches"
+                    save_debug_batch_images(
+                        val_batch_raw,
+                        debug_dir / f"val_raw_step_{state['step']:07d}.png",
+                        centered=False,
+                        title="val_raw",
+                    )
+
                 val_batch = get_data_scaler(bool(cfg.data.centered))(val_batch)
+
+                if args.dump_raw_batch and val_idx == 0:
+                    debug_dir = workdir / "debug_batches"
+                    save_debug_batch_images(
+                        val_batch,
+                        debug_dir / f"val_model_input_step_{state['step']:07d}.png",
+                        centered=bool(cfg.data.centered),
+                        title="val_model_input",
+                    )
+
                 loss = eval_step_fn(state, val_batch)
                 losses.append(float(loss.item()))
             val_loss = float(np.mean(losses)) if losses else float("nan")
@@ -750,6 +757,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--split-seed", type=int, default=1234)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--num-workers", type=int, default=4)
+    parser.add_argument("--dump-raw-batch", action="store_true")
+    parser.add_argument("--dump-batch-freq", type=int, default=10000)
+    parser.add_argument("--dump-batch-max", type=int, default=20)
+
     return parser
 
 

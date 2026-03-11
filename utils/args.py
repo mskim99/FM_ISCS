@@ -45,6 +45,12 @@ def build_parser():
         "--config-path", type=str, default="configs/ve/BMR_ZSR_256.yaml", help="The path to the config file"
     )
     parser.add_argument("--renoise-method", type=str, default="DDPM", help="The re-noising method")
+    parser.add_argument(
+        "--plane",
+        type=str,
+        default="sagittal",
+        choices=["sagittal", "coronal", "axial"],
+    )
 
     args = parser.parse_args()
     return args
